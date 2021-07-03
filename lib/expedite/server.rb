@@ -3,10 +3,12 @@ require 'json'
 require 'socket'
 require "expedite/application_manager"
 require "expedite/env"
+require "expedite/send_json"
 require "expedite/signals"
 
 module Expedite
   class Server
+    include SendJson
     include Signals
 
     def self.boot(options = {})
@@ -97,11 +99,32 @@ module Expedite
       client.puts env.version
 
       app_client = client.recv_io
-      command    = JSON.load(client.read(client.gets.to_i))
+      command    = read_json(client)
 
       args, variant = command.values_at('args', 'variant')
       cmd = args.first
-      if true #Expedite.command(cmd)
+
+      if variant == '__server__'
+        case cmd
+        when 'application_pids'
+          client.puts
+          unix_socket = UNIXSocket.for_fd(app_client.fileno)
+          _stdout, stderr, _stdin = streams = 3.times.map do
+            unix_socket.recv_io
+          end
+          client.puts Process.pid
+
+          application_pids = []
+          env.applications.each do |k, v|
+            application_pids << v.pid if v.pid
+          end
+          send_json(unix_socket, application_pids)
+
+          unix_socket.close
+          client.close
+        else
+        end
+      elsif Expedite::Commands.lookup(cmd)
         log "running command #{cmd}"
         client.puts
 
